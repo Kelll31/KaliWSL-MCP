@@ -1,0 +1,13 @@
+{
+  "workspace": ".kali-mcp",
+  "allowed_targets": ["127.0.0.0/8", "::1", "localhost"],
+  "excluded_targets": [],
+  "max_concurrent": 4,
+  "max_queued": 64,
+  "max_timeout": 3600,
+  "max_output_bytes": 16777216,
+  "max_artifact_bytes": 268435456,
+  "max_response_bytes": 131072,
+  "terminate_grace_seconds": 2.0,
+  "profile_rate_limit": 50
+}

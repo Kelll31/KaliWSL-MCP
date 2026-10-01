@@ -1,0 +1,7 @@
+{
+  "engagement_id": "<replace-with-engagement-id>",
+  "scans": [
+    {"profile": "ports_quick", "target": "127.0.0.1", "options": {"ports": "80,443"}},
+    {"profile": "http_probe", "target": "http://127.0.0.1:8080", "timeout": 60}
+  ]
+}

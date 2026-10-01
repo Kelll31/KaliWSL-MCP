@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kali-wsl-mcp"
+version = "0.2.0"
+description = "Agent-oriented MCP workspace for Kali Linux and Kali WSL"
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["mcp", "kali-linux", "wsl", "pentest", "agents"]
+dependencies = [
+    "mcp>=2.2,<3", "defusedxml>=0.7.1", "anyio>=4.10", "pydantic>=2.12,<3",
+    "starlette>=0.48", "uvicorn>=0.31.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/Kelll31/KaliWSL-MCP"
+Repository = "https://github.com/Kelll31/KaliWSL-MCP"
+Issues = "https://github.com/Kelll31/KaliWSL-MCP/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.11"]
+
+[project.scripts]
+kali-mcp = "kali_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kali_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/.gitignore",
+    "/.gitattributes",
+    "/src",
+    "/tests",
+    "/scripts",
+    "/examples",
+    "/README.md",
+    "/CONTRIBUTING.md",
+    "/CHANGELOG.md",
+    "/LICENSE*",
+    "/config.example.json",
+    "/pyproject.toml",
+    "/requirements.lock",
+    "/uv.lock",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

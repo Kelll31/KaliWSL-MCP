@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "kali": {
+      "command": "wsl.exe",
+      "args": [
+        "-d", "kali-linux",
+        "--cd", "/mnt/e/github/KaliWSL-MCP",
+        "--exec", "/mnt/e/github/KaliWSL-MCP/.venv-kali/bin/python",
+        "-m", "kali_mcp", "--config", "config.local.json"
+      ]
+    }
+  }
+}

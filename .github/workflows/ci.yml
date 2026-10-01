@@ -1,0 +1,46 @@
+name: checks
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen --extra dev ruff format --check .
+      - run: uv run --frozen --extra dev ruff check .
+      - run: uv run --frozen --extra dev python -m pytest -q
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - run: uv lock --check
+      - run: uv build
+      - run: python scripts/check-dist.py
+      - run: uv venv .venv-package
+      - run: uv pip install --python .venv-package/bin/python --require-hashes -r requirements.lock
+      - run: uv pip install --python .venv-package/bin/python --no-deps dist/*.whl
+      - run: .venv-package/bin/python -I -m kali_mcp --help
