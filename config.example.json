@@ -1,5 +1,7 @@
 {
   "workspace": ".kali-mcp",
+  "report_root": null,
+  "report_secret_env": [],
   "allowed_targets": ["127.0.0.0/8", "::1", "localhost"],
   "excluded_targets": [],
   "max_concurrent": 4,

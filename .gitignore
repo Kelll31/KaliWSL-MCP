@@ -24,6 +24,9 @@ config.*.local.json
 .env.*
 !.env.example
 .kali-mcp*/
+.report-secrets.json
+pentests/
+pentest_*/
 *.log
 *.pcap
 *.pcapng

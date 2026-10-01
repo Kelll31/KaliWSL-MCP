@@ -34,15 +34,33 @@ class Workflows:
         prepared = []
         # Validate every request before starting any process or creating any job directory.
         for request in requests:
-            tool, args = build(
-                request.profile,
-                request.target,
-                request.options,
-                self.workspace.config.profile_rate_limit,
-            )
+            try:
+                tool, args = build(
+                    request.profile,
+                    request.target,
+                    request.options,
+                    self.workspace.config.profile_rate_limit,
+                )
+            except ValueError as error:
+                self.workspace.reports.blocked(
+                    engagement_id,
+                    request.target,
+                    "MCP scan_batch " + json.dumps(request.model_dump(), ensure_ascii=False),
+                    "Batch rejected; no scans started. " + str(error),
+                )
+                raise
             jobs.preflight(engagement_id, tool, args, request.target, request.timeout)
             prepared.append((request, tool, args))
-        jobs.check_capacity(len(prepared))
+        try:
+            jobs.check_capacity(len(prepared))
+        except ValueError as error:
+            self.workspace.reports.blocked(
+                engagement_id,
+                requests[0].target,
+                "MCP scan_batch " + json.dumps([r.model_dump() for r in requests]),
+                str(error),
+            )
+            raise
         estimated = [
             {"target": request.target, "tool": tool, "profile": request.profile, "argv": args}
             for request, tool, args in prepared

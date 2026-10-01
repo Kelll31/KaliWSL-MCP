@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Автоматические папки отчётов по цели и UTC; Windows report_root через wslpath.
+- Журнал заданий с командой/argv, портом/сервисом, exit code, raw и причинами отказов.
+- Полные redacted-копии stdout/stderr; оригиналы evidence сохраняются без изменений.
+- report_status, report_step_add и report_summary_update; итоговые факты и гипотезы разделены.
+- Восстановление snapshots/Summary, экспорт текстовых evidence и reporting smoke-сценарий.
+- Nikto web_audit исключает DoS-категорию 6.
+
 ## 0.2.0
 
 Первая версия для публикации.

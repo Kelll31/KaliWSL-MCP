@@ -3,6 +3,9 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -67,6 +70,24 @@ DEFAULT_TOOLS = (
 )
 
 
+def report_path(value: str, base: Path | None = None) -> Path:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise ValueError("report_root must be a non-empty path or null")
+    if os.name != "nt" and re.match(r"^[A-Za-z]:[\\/]", value):
+        if not (converter := shutil.which("wslpath")):
+            raise ValueError("Windows report_root requires WSL; use a native Linux path")
+        result = subprocess.run(
+            [converter, "-u", value], capture_output=True, text=True, timeout=5, check=False
+        )
+        if result.returncode or not result.stdout.strip().startswith("/"):
+            raise ValueError("Cannot convert Windows report_root with wslpath")
+        value = result.stdout.strip()
+    destination = Path(value).expanduser()
+    if not destination.is_absolute() and base is not None:
+        destination = base / destination
+    return destination.resolve()
+
+
 def target_host(value: str) -> str:
     value = value.strip()
     if not value or any(c.isspace() for c in value) or value.startswith("-"):
@@ -125,6 +146,8 @@ def denied(target: str, rule: str) -> bool:
 @dataclass(frozen=True)
 class Config:
     workspace: Path = field(default_factory=lambda: Path(".kali-mcp").resolve())
+    report_root: Path | None = None
+    report_secret_env: tuple[str, ...] = ()
     allowed_targets: tuple[str, ...] = ("127.0.0.0/8", "::1", "localhost")
     excluded_targets: tuple[str, ...] = ()
     allowed_tools: tuple[str, ...] = DEFAULT_TOOLS
@@ -138,6 +161,12 @@ class Config:
     profile_rate_limit: int = 50
 
     def __post_init__(self) -> None:
+        if self.report_root is not None and not isinstance(self.report_root, Path):
+            raise ValueError("report_root must be a Path; use Config.load for JSON paths")
+        if any(
+            not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", v) for v in self.report_secret_env
+        ):
+            raise ValueError("report_secret_env must contain environment variable names")
         for name in (
             "max_concurrent",
             "max_queued",
@@ -172,8 +201,14 @@ class Config:
             if not root.is_absolute() and path:
                 root = Path(path).resolve().parent / root
             raw["workspace"] = root.resolve()
-        for key in ("allowed_targets", "excluded_targets", "allowed_tools"):
+        if raw.get("report_root") is not None:
+            raw["report_root"] = report_path(
+                raw["report_root"], Path(path).resolve().parent if path else None
+            )
+        for key in ("allowed_targets", "excluded_targets", "allowed_tools", "report_secret_env"):
             if key in raw:
+                if not isinstance(raw[key], list):
+                    raise ValueError(f"{key} must be an array")
                 raw[key] = tuple(raw[key])
         return cls(**raw)
 

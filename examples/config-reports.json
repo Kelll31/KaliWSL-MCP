@@ -1,0 +1,6 @@
+{
+  "workspace": ".kali-mcp",
+  "report_root": "G:\\pentests",
+  "report_secret_env": ["TARGET_PASSWORD", "TARGET_TOKEN"],
+  "allowed_targets": ["127.0.0.0/8", "::1", "localhost"]
+}

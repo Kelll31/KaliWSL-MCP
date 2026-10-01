@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import signal
 import time
 import uuid
@@ -60,8 +61,27 @@ class JobManager:
             self.save(path, data)
 
     def save(self, path: Path, data: dict) -> None:
+        with self.workspace.mutations:
+            self._save(path, data)
+
+    def _save(self, path: Path, data: dict) -> None:
         write_json(path / "job.json", data)
         self.workspace.catalog.put("job", data, data["engagement_id"])
+        try:
+            self.workspace.reports.observe_job(data)
+        except (OSError, ValueError) as error:
+            data["report_error"] = str(error)
+            if data["status"] == "queued":
+                data.update(
+                    status="failed", finished_at=now(), error="Report unavailable; not executed"
+                )
+            write_json(path / "job.json", data)
+            self.workspace.catalog.put("job", data, data["engagement_id"])
+            if (
+                data["status"] == "failed"
+                and data.get("error") == "Report unavailable; not executed"
+            ):
+                raise ValueError(f"Report unavailable; command not executed: {error}") from error
 
     async def persist(self, path: Path, data: dict) -> None:
         saving = asyncio.create_task(asyncio.to_thread(self.save, path, data.copy()))
@@ -99,6 +119,24 @@ class JobManager:
     def preflight(
         self, engagement_id: str, tool: str, args: list[str], target: str, timeout: int = 300
     ) -> str:
+        try:
+            return self._preflight(engagement_id, tool, args, target, timeout)
+        except ValueError as error:
+            try:
+                self.workspace.engagement_path(engagement_id)
+            except ValueError:
+                raise error from None
+            command = (
+                shlex.join([tool, *args])
+                if isinstance(args, list) and all(isinstance(arg, str) for arg in args)
+                else f"{tool} {args!r}"
+            )
+            self.workspace.reports.blocked(engagement_id, target, command, str(error))
+            raise
+
+    def _preflight(
+        self, engagement_id: str, tool: str, args: list[str], target: str, timeout: int = 300
+    ) -> str:
         if self.closing:
             raise ValueError("Server is shutting down")
         self.workspace.check_target(engagement_id, target)
@@ -128,7 +166,13 @@ class JobManager:
         batch_id: str | None = None,
     ) -> dict:
         executable = self.preflight(engagement_id, tool, args, target, timeout)
-        self.check_capacity()
+        try:
+            self.check_capacity()
+        except ValueError as error:
+            self.workspace.reports.blocked(
+                engagement_id, target, shlex.join([executable, *args]), str(error)
+            )
+            raise
         job_id = uuid.uuid4().hex
         path = self.workspace.engagement_path(engagement_id) / "jobs" / job_id
         path.mkdir(mode=0o700)
@@ -207,7 +251,7 @@ class JobManager:
                         output_limit.set()
 
         async def watch() -> str:
-            deadline = time.monotonic() + data["timeout"]
+            deadline = started + data["timeout"]
             next_quota_check = time.monotonic() + 1
             while process.returncode is None:
                 if time.monotonic() >= deadline:

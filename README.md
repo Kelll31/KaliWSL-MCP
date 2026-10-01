@@ -1,7 +1,7 @@
 # Kali WSL MCP
 
 MCP для работы агентов с Kali Linux через WSL. Python 3.11+, MCP Python SDK v2.
-Версия 0.2: **36 tools, 18 профилей**, stdio и локальный Streamable HTTP.
+Версия 0.2: **39 tools, 18 профилей**, stdio и локальный Streamable HTTP.
 
 [![Checks](https://github.com/Kelll31/KaliWSL-MCP/actions/workflows/ci.yml/badge.svg)](https://github.com/Kelll31/KaliWSL-MCP/actions/workflows/ci.yml)
 
@@ -20,6 +20,8 @@ MCP для работы агентов с Kali Linux через WSL. Python 3.11
 - IP/CIDR/домены/wildcard scope с исключениями. Пересечение CIDR с исключением отклоняется.
 - Находки с дедупликацией и статусами, импорт Nuclei, заметки для передачи работы агенту.
 - Отчёты Markdown и JSON с evidence и историей выполнения.
+- Автоматический журнал каждого задания: UTC, argv, цель/порт/сервис, exit code и raw.
+- Отдельная папка пентеста цели, ручные шаги, Summary и маскирование секретов в копиях.
 - Общая очередь для нескольких HTTP-клиентов; отключение одного клиента не отменяет её.
 
 ## Установка в Windows + Kali WSL
@@ -148,6 +150,8 @@ WSL. HTTP-клиенты с общим токеном разделяют дос�
 ~~~json
 {
   "workspace": ".kali-mcp",
+  "report_root": null,
+  "report_secret_env": [],
   "allowed_targets": ["127.0.0.0/8", "::1", "localhost"],
   "excluded_targets": [],
   "max_concurrent": 4,
@@ -205,13 +209,15 @@ service_audit запускает banner, SSH host key, TLS certificate и HTTP N
 | Артефакты | artifact_list, artifact_info, artifact_read, artifact_tail, artifact_search, artifact_parse, artifact_summary, input_write |
 | Находки | finding_add, finding_list, finding_get, finding_update, finding_import |
 | Заметки / отчёт | note_add, note_list, report_generate |
+| Журнал пентеста | report_status, report_step_add, report_summary_update |
 
 Resources: kali://profiles и kali://workflow. Prompt: pentest_workflow.
 
 ## Рабочий процесс
 
 1. Проверьте environment_check и profile_list.
-2. Создайте engagement с targets и optional excluded_targets.
+2. Создайте engagement с targets, optional excluded_targets и текстом roe.
+   Для отдельного пентеста конкретной цели создавайте отдельный engagement на эту цель.
 3. Просмотрите recon_plan или scan_plan.
 4. Используйте scan_start / recon_start либо scan_batch:
 
@@ -233,6 +239,111 @@ Resources: kali://profiles и kali://workflow. Prompt: pentest_workflow.
    unverified findings. Повторный импорт объединяет evidence, без дублей.
 8. finding_update задаёт open / confirmed / false_positive / resolved.
    note_add сохраняет промежуточные выводы. report_generate создаёт report.md и report.json.
+
+## Папки и журнал пентеста
+
+Каждый engagement автоматически получает папку `pentest_<target>_<YYYYMMDD_HHMM>`
+с временем UTC. Если два пентеста начинаются в одну минуту, добавляется суффикс ID.
+Несколько scope targets в одном engagement дают общий отчёт с пометкой `and_N_more`.
+`report.md` и `report.json` создаются сразу и обновляются при постановке задания
+в очередь, запуске, завершении, добавлении находок и заметок.
+
+По умолчанию папки находятся в `<workspace>/reports`. Для Windows-диска добавьте
+в `config.local.json`:
+
+~~~json
+{
+  "report_root": "G:\\pentests",
+  "report_secret_env": ["TARGET_PASSWORD", "TARGET_TOKEN"]
+}
+~~~
+
+Это дополнительные поля существующего конфига; сохраните свой scope и остальные настройки.
+Полный пример: [examples/config-reports.json](examples/config-reports.json).
+Kali WSL переводит Windows path через `wslpath`, например в `/mnt/g/pentests`.
+Диск должен быть доступен WSL. Относительный `report_root` разрешается относительно
+config-файла. `report_status` возвращает Linux и Windows paths; агенты не меняют
+операторский корневой каталог через tool arguments.
+
+~~~text
+G:\pentests\
+  pentest_127.0.0.1_20261001_1905\
+    report.md
+    report.json
+    raw\
+      nmap_20261001_190501_<id>.stdout.txt
+      nmap_20261001_190501_<id>.stderr.txt
+    evidence\                 # текстовые evidence находок
+~~~
+
+Шаг содержит UTC, цель и известный порт/сервис, точную команду и literal argv с маскированием
+секретов, ссылки на оба потока, exit code, краткий preview и статус.
+`completed → success`, `failed → fail`, `timed_out → timeout`.
+Отказ в запуске, отмена и остановка по quota фиксируются как `blocked` с исходным job state.
+`queued/running` показываются как `pending`. Пустой поток, отсутствие запуска и неизвестный
+exit code отмечаются явно. Если выполнение оборвано или вывод ограничен quota, отчёт
+указывает, что capture может быть неполным; строки preview не заменяют raw.
+
+`raw` содержит полные копии сохранённых stdout/stderr с заменой распознанных секретов
+на `<REDACTED>`. Остальные байты, включая CRLF и невалидный UTF-8, сохраняются.
+Оригинальные job streams и ручные snapshots остаются без изменений в private workspace.
+Manifest хранит размеры и SHA-256 именно экспортированных копий.
+Текстовые evidence находок копируются в `evidence`; бинарные и превышающие
+`max_output_bytes` остаются в workspace с явной причиной пропуска в отчёте.
+
+Автомаскирование распознаёт password/token/API-key assignments, secret flags, HTTP auth,
+cookies, URL credentials, распространённые ключи и private-key blocks.
+Для секретов без метки укажите имена environment variables в `report_secret_env` и задайте
+их значения в окружении самого MCP-сервера. Значения не записываются в публичный config.
+Использованные значения и распознанные CLI-пароли сохраняются только в private workspace
+в `.report-secrets.json`, чтобы пересборка старого отчёта после смены секрета не раскрыла
+его прежнее значение. Этот файл, как и оригинальные raw, содержит чувствительные данные
+и не попадает в папку отчёта или Git.
+Это распознавание известных шаблонов и зарегистрированных значений; произвольный секрет
+без метки, неизвестный серверу, автоматически определить нельзя.
+
+Действия за пределами очереди MCP записывайте через `report_step_add`:
+
+~~~json
+{
+  "engagement_id": "<id>",
+  "target": "127.0.0.1",
+  "port": 8080,
+  "service": "http",
+  "command": "GET /health HTTP/1.1",
+  "status": "success",
+  "stdout": "HTTP/1.1 200 OK",
+  "stderr": "",
+  "exit_code": null,
+  "summary": "Ответ получен; ручная запись агента"
+}
+~~~
+
+Inline stdout/stderr ограничены 64 KiB каждый; для большого вывода передавайте
+`stdout_path/stderr_path` относительно engagement. Сервер сохраняет immutable snapshot.
+Ручные данные имеют `provenance=agent_supplied`; результаты очереди — `mcp_observed`.
+Если действие заблокировано RoE или может вызвать DoS, остановитесь и запишите
+`status=blocked`, `reason` и запрошенную команду, без выдуманного вывода и exit code.
+Scope проверяется сервером; оценка текстового RoE и DoS-риска остаётся задачей агента/
+оператора. Nikto-профиль исключает категорию DoS через `-Tuning x6`. Raw `run_tool`
+сохраняет описанные ниже границы выполнения.
+
+В конце вызовите `report_summary_update` с `confirmed_facts`, `hypotheses`,
+`limitations`, `next_steps`, затем `report_generate`. `null` сохраняет раздел, `[]` очищает
+его. Без ручных фактов Summary перечисляет только наблюдавшиеся успешные запуски;
+подтверждение уязвимости из exit code не выводится. Ограничения выполнения добавляются
+автоматически. Если корневой каталог недоступен до старта, команда не запускается.
+При ошибке записи после старта исходные streams сохраняются, `report_status.export_errors`
+показывает проблему; после восстановления каталога `report_generate` повторяет экспорт.
+
+Реальная проверка из Kali с отдельным workspace и loopback fixtures:
+
+~~~bash
+.venv-kali/bin/python scripts/report-smoke.py --report-root 'G:\pentests'
+~~~
+
+Она создаёт демонстрационный отчёт, проверяет Nmap, success/fail/timeout/blocked,
+raw-файлы и маскирование, сохраняя оригинальный вывод в workspace.
 
 finding_list по умолчанию возвращает compact metadata. Полный текст читается через
 finding_get или findings/<id>.json. Ответы ограничены max_response_bytes на payload

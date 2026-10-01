@@ -30,11 +30,17 @@ class Catalog:
             runtime = db.execute(
                 "SELECT value FROM metadata WHERE key='runtime_migrated'"
             ).fetchone()
-            if initialized is None or runtime is None:
+            reporting = db.execute(
+                "SELECT value FROM metadata WHERE key='reporting_migrated'"
+            ).fetchone()
+            if initialized is None or runtime is None or reporting is None:
                 for kind, pattern in (
                     ("engagement", "*/engagement.json"),
                     ("job", "*/jobs/*/job.json"),
                     ("finding", "*/findings/*.json"),
+                    ("note", "*/notes/*.json"),
+                    ("step", "*/steps/*.json"),
+                    ("summary", "*/summary.json"),
                 ):
                     for path in (root / "engagements").glob(pattern):
                         data = json.loads(path.read_text(encoding="utf-8"))
@@ -45,6 +51,7 @@ class Catalog:
                         self._put(db, kind, data, eid)
                 db.execute("INSERT OR REPLACE INTO metadata VALUES ('imported', '1')")
                 db.execute("INSERT OR REPLACE INTO metadata VALUES ('runtime_migrated', '1')")
+                db.execute("INSERT OR REPLACE INTO metadata VALUES ('reporting_migrated', '1')")
 
     @contextmanager
     def connect(self):

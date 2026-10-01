@@ -291,6 +291,8 @@ def build(
             "10",
             "-nointeractive",
             "-nocheck",
+            "-Tuning",
+            "x6",
             "-Format",
             "json",
             "-output",

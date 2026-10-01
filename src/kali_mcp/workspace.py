@@ -26,7 +26,7 @@ def write_json(path: Path, data: dict) -> None:
 
 
 def write_text(path: Path, text: str) -> None:
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary = path.with_name(f".{uuid.uuid4().hex}.tmp")
     try:
         temporary.write_text(text, encoding="utf-8")
         temporary.replace(path)
@@ -42,6 +42,9 @@ class Workspace:
         (self.root / "engagements").mkdir(exist_ok=True, mode=0o700)
         self.catalog = Catalog(self.root, config.max_response_bytes)
         self.mutations = RLock()
+        from .reporting import Reports
+
+        self.reports = Reports(self)
 
     def engagement_path(self, engagement_id: str) -> Path:
         if not re.fullmatch(r"[a-f0-9]{32}", engagement_id):
@@ -52,10 +55,16 @@ class Workspace:
         return path
 
     def create(
-        self, name: str, targets: list[str], excluded_targets: list[str] | None = None
+        self,
+        name: str,
+        targets: list[str],
+        excluded_targets: list[str] | None = None,
+        roe: str = "",
     ) -> dict:
         if not name.strip() or len(name) > 200 or not targets or len(targets) > 100:
             raise ValueError("Provide a name (1..200 chars) and 1..100 targets")
+        if len(roe.encode("utf-8")) > 32768:
+            raise ValueError("RoE text is limited to 32 KiB")
         for target in targets:
             self.config.check_rule(target)
         excluded_targets = excluded_targets or []
@@ -74,10 +83,12 @@ class Workspace:
             "targets": targets,
             "excluded_targets": excluded_targets,
             "created_at": now(),
+            "roe": roe,
         }
         write_json(path / "engagement.json", data)
         self.catalog.put("engagement", data, engagement_id)
-        return data
+        self.reports.generate(engagement_id)
+        return self.get(engagement_id)
 
     def get(self, engagement_id: str) -> dict:
         self.engagement_path(engagement_id)
@@ -200,6 +211,7 @@ class Workspace:
                     existing,
                 )
                 self.catalog.put("finding", existing, engagement_id)
+                self.reports.generate(engagement_id)
                 return {**existing, "deduplicated": True}
             data = {
                 "id": identifier,
@@ -217,6 +229,7 @@ class Workspace:
             destination = self.engagement_path(engagement_id) / "findings" / f"{identifier}.json"
             write_json(destination, data)
             self.catalog.put("finding", data, engagement_id)
+            self.reports.generate(engagement_id)
             return {**data, "deduplicated": False}
 
     def update_finding(
@@ -252,6 +265,7 @@ class Workspace:
             destination = self.engagement_path(engagement_id) / "findings" / f"{data['id']}.json"
             write_json(destination, data)
             self.catalog.put("finding", data, engagement_id)
+            self.reports.generate(engagement_id)
             return data
 
     def note_add(self, engagement_id: str, text: str) -> dict:
@@ -262,86 +276,8 @@ class Workspace:
         data = {"id": uuid.uuid4().hex, "text": text, "created_at": now()}
         write_json(root / f"{data['id']}.json", data)
         self.catalog.put("note", data, engagement_id)
+        self.reports.generate(engagement_id)
         return data
 
     def report(self, engagement_id: str) -> dict:
-        engagement = self.get(engagement_id)
-        findings = self.findings(engagement_id)
-        history = self.catalog.all("job", engagement_id)
-        generated = now()
-        lines = [
-            f"# {engagement['name']}",
-            "",
-            f"Generated: {now()}",
-            "",
-            "## Scope",
-            "",
-            *[f"- `{t}`" for t in engagement["targets"]],
-            "",
-            "## Findings",
-            "",
-            "Findings are agent-recorded and require verification.",
-            "",
-        ]
-        exclusions = sorted(
-            set(engagement.get("excluded_targets", [])) | set(self.config.excluded_targets)
-        )
-        if exclusions:
-            lines[lines.index("## Findings") : lines.index("## Findings")] = [
-                "Excluded targets:",
-                "",
-                *[f"- `{rule}`" for rule in exclusions],
-                "",
-            ]
-        rank = {s: i for i, s in enumerate(["critical", "high", "medium", "low", "info"])}
-        lines.extend(
-            [
-                "Severity totals: "
-                + ", ".join(
-                    f"{severity}: {sum(f['severity'] == severity for f in findings)}"
-                    for severity in reversed(SEVERITIES)
-                ),
-                "",
-            ]
-        )
-        for item in sorted(findings, key=lambda f: rank[f["severity"]]):
-            lines.extend(
-                [
-                    f"### [{item['severity'].upper()}] {item['title']}",
-                    "",
-                    f"Target: `{item['target']}`",
-                    "",
-                    f"Status: {item.get('status', 'open')}",
-                    "",
-                    item["description"],
-                    "",
-                    "Remediation: " + item["remediation"],
-                    "",
-                    "Evidence:",
-                    "",
-                    *[f"- [{p}](<{p}>)" for p in item["evidence"]],
-                    "",
-                ]
-            )
-        notes = self.catalog.all("note", engagement_id)
-        if notes:
-            lines.extend(["## Notes", ""])
-            for note in notes:
-                lines.extend([f"{note['created_at']}: {note['text']}", ""])
-        lines.extend(["## Execution history", ""])
-        for job in history:
-            lines.append(f"- `{job['id']}`: {job['tool']} — {job['status']}")
-        destination = self.engagement_path(engagement_id) / "report.md"
-        write_text(destination, "\n".join(lines) + "\n")
-        write_json(
-            destination.with_suffix(".json"),
-            {
-                "engagement": engagement,
-                "generated_at": generated,
-                "findings": findings,
-                "jobs": history,
-                "notes": notes,
-                "untrusted": True,
-            },
-        )
-        return {"path": "report.md", "json_path": "report.json", "findings": len(findings)}
+        return self.reports.generate(engagement_id)
